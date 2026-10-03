@@ -1,0 +1,48 @@
+{#
+Streak macros: badge, banner, stats.
+
+Templates receive only plain values (dicts/ints/bools) prepared by the
+routes in app.py, so nothing here touches the domain layer directly.
+Everything stays quiet for users with no streak.
+#}
+
+{% from "macros/user_macros.html.j2" import user_display %}
+
+{% macro streak_badge(streaks, user_id) %}
+  {# 🔥N pill next to a username; renders nothing for streak 0. #}
+  {% set streak = streaks.get(user_id, 0) if streaks is defined and streaks else 0 %}
+  {% if streak > 0 %}
+    <span class="streak-badge"
+          title="Active contribution streak: {{ streak }} day{{ 's' if streak != 1 }}">🔥 {{ streak }}</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro user_with_streak(streaks, user_id, username) %}
+  {# For sites not already wrapped in a link: username + badge. #}
+  {{ user_display(username) }}{{ streak_badge(streaks, user_id) }}
+{% endmacro %}
+
+{% macro streak_banner(at_risk, streak) %}
+  {# Feed banner, shown only when the viewer's streak needs today's
+     contribution — never nags users with no streak going. #}
+  {% if at_risk and streak > 0 %}
+    <div class="streak-banner" role="alert">
+      🔥 Your <strong>{{ streak }}-day streak</strong> is at risk — contribute
+      today (a post or a comment) to keep it alive!
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro streak_stats(streak, best) %}
+  {# Profile block: current streak next to the personal best. #}
+  {% if streak > 0 %}
+    <div class="streak-stats">
+      <span class="streak-stats-item">🔥 Current: <strong>{{ streak }}</strong></span>
+      <span class="streak-stats-sep">·</span>
+      <span class="streak-stats-item">Best: <strong>{{ best }}</strong></span>
+      {% if streak >= best %}
+        <span class="streak-record">You're at your best — keep going!</span>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endmacro %}

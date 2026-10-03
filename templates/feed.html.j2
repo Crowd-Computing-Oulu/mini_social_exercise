@@ -1,12 +1,14 @@
 {% extends "base.html.j2" %}
 {% block content %}
 {% from "macros/user_macros.html.j2" import user_display %}
+{% from "macros/streak_macros.html.j2" import streak_badge, streak_banner %}
 
 <div class="align-center text-center">
   <img src="{{ url_for('static', filename='icon.png') }}" alt="Logo" style="height: 64px;" class="mb-4">
 </div>
 
 {% if session.get('user_id') %}
+{{ streak_banner(streak_at_risk, my_streak) }}
 <div class="col-md-8 mx-auto mb-4">
   <div class="card shadow-sm">
     <div class="card-body">
@@ -54,10 +56,10 @@
       <div class="d-flex justify-content-between align-items-center">
         <h3 class="card-title mb-0">
           {% if entry.followed_poster %}
-          <a href="/u/{{ entry.post.user_id }}">{{ user_display(entry.post.username) }}<span class="text-success p-1" data-toggle="tooltip" data-placement="top" title="You are following this user"> ✓ </span>
+          <a href="/u/{{ entry.post.user_id }}">{{ user_display(entry.post.username) }}{{ streak_badge(streaks, entry.post.user_id) }}<span class="text-success p-1" data-toggle="tooltip" data-placement="top" title="You are following this user"> ✓ </span>
 </a>
           {% else %}
-          <a href="/u/{{ entry.post.user_id }}">{{ user_display(entry.post.username) }} </a>
+          <a href="/u/{{ entry.post.user_id }}">{{ user_display(entry.post.username) }}{{ streak_badge(streaks, entry.post.user_id) }} </a>
           {% endif %}
         </h3>
 
@@ -138,7 +140,7 @@
         <li class="card shadow-none p-2 mt-2">
           <div class="d-flex justify-content-between">
             <div>
-              <strong><a href="/u/{{ comment.username }}">{{ user_display(comment.username) }}</a></strong>
+              <strong><a href="/u/{{ comment.username }}">{{ user_display(comment.username) }}{{ streak_badge(streaks, comment.user_id) }}</a></strong>
               <p class="mb-0">{{ comment.content }}</p>
             </div>
             

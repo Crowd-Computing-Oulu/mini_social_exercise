@@ -1,13 +1,14 @@
 {% extends "base.html.j2" %}
 {% block content %}
 {% from "macros/user_macros.html.j2" import user_display %}
+{% from "macros/streak_macros.html.j2" import streak_badge %}
 
 <div class="col-md-8 mx-auto pt-4">
   <div class="card shadow-sm">
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center">
         <h3 class="card-title mb-0">
-          <a href="/u/{{ post.user_id }}">{{ user_display(post.username) }}</a>
+          <a href="/u/{{ post.user_id }}">{{ user_display(post.username) }}{{ streak_badge(streaks, post.user_id) }}</a>
         </h3>
         {% if session.get('user_id') == post.user_id %}
         <div class="d-flex align-items-center">
@@ -82,7 +83,7 @@
         <li class="card shadow-none p-2 mt-2">
           <div class="d-flex justify-content-between">
             <div>
-              <strong><a href="/u/{{ comment.username }}">{{ user_display(comment.username) }}</a></strong>
+              <strong><a href="/u/{{ comment.username }}">{{ user_display(comment.username) }}{{ streak_badge(streaks, comment.user_id) }}</a></strong>
               <p class="mb-0">{{ comment.content }}</p>
               
             

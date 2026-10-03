@@ -17,3 +17,57 @@ footer {
 }
 
 
+
+/* Streak feature: badge, banner, stats */
+
+/* 🔥N pill next to a username */
+.streak-badge {
+  display: inline-block;
+  font-size: 0.72em;
+  font-weight: 600;
+  padding: 0.1em 0.55em;
+  margin-left: 0.35em;
+  border-radius: 999px;
+  background-color: #fff3e0;
+  color: #b45309;
+  border: 1px solid #f59e0b;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Feed banner shown when the viewer's streak is at risk */
+.streak-banner {
+  background-color: #fff8e1;
+  border: 1px solid #f59e0b;
+  border-left: 5px solid #f59e0b;
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 1rem auto;
+  max-width: calc(100% - 2rem);
+  color: #7c4a03;
+  text-align: center;
+}
+
+/* Profile: current streak · personal best */
+.streak-stats {
+  margin-top: 0.75rem;
+  font-size: 0.95rem;
+  color: #6c757d;
+}
+.streak-stats-sep {
+  margin: 0 0.5em;
+}
+.streak-record {
+  display: inline-block;
+  margin-left: 0.75em;
+  font-size: 0.85em;
+  color: #198754;
+}
+
+/* Keep the badge from overflowing narrow card titles on mobile */
+@media (max-width: 576px) {
+  .streak-badge {
+    font-size: 0.65em;
+    margin-left: 0.25em;
+  }
+}

@@ -1,11 +1,12 @@
 {% extends "base.html.j2" %}
 {% block content %}
 {% from "macros/user_macros.html.j2" import user_display %}
+{% from "macros/streak_macros.html.j2" import streak_badge, user_with_streak %}
 
 <div class="container mt-5 col-md-8 mx-auto">
   <!-- Heading for the page -->
   <h2 class="text-center border-bottom pb-2 mb-4">
-    <span>{{ title }} {{ user_display(user.username) }}</span>
+    <span>{{ title }} {{ user_with_streak(streaks, user.id, user.username) }}</span>
   </h2>
 
   <!-- Card to contain the list of users -->
@@ -16,7 +17,7 @@
         <div >
           {% for u in users %}
             <a href="{{ url_for('user_profile', username=u.username) }}" class="mb-3">
-              {{ user_display(u.username) }} <br>
+              {{ user_display(u.username) }}{{ streak_badge(streaks, u.id) }} <br>
             </a>
           {% endfor %}
         </div>
