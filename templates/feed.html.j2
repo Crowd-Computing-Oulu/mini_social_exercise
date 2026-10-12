@@ -11,16 +11,108 @@
   <div class="card shadow-sm">
     <div class="card-body">
       <h5 class="card-title">Create a new post</h5>
-      <form action="{{ url_for('add_post') }}" method="POST">
+      <p class="small text-muted mb-2">Make your contribution useful by adding detail, mentioning a member, and using a topic hashtag.</p>
+      <form action="{{ url_for('add_post') }}" method="POST" id="new-post-form" novalidate>
         <div class="mb-3">
-          <textarea class="form-control" name="content" rows="3" placeholder="What's on your mind, {{ session.get('username') }}?" required></textarea>
+          <textarea class="form-control" name="content" id="new-post-content" rows="3" placeholder="What's on your mind, {{ session.get('username') }}?" required>{{ post_draft }}</textarea>
+          <div id="post-quality-feedback" class="small mt-2" aria-live="polite"></div>
         </div>
-        <button type="submit" class="btn btn-primary float-end">Post</button>
+        <button type="submit" class="btn btn-primary float-end" id="submit-post-button">Post</button>
       </form>
     </div>
   </div>
 </div>
 {% endif %}
+
+{% if session.get('user_id') %}
+<script>
+  (() => {
+    const form = document.getElementById('new-post-form');
+    const textarea = document.getElementById('new-post-content');
+    const feedback = document.getElementById('post-quality-feedback');
+    const minimumLength = {{ min_post_length }};
+    const minimumWords = {{ min_post_words }};
+
+    function analyzeDraft(value) {
+      const text = value.trim();
+      const wordCount = (text.match(/\b[\w']+\b/g) || []).length;
+      const hasMention = /(?<!\w)@[A-Za-z0-9_]+/.test(text);
+      const hasHashtag = /(?<!\w)#[A-Za-z0-9_]+/.test(text);
+      const issues = [];
+
+      if (text.length < minimumLength) {
+        issues.push(`Add more detail (${minimumLength - text.length} characters needed).`);
+      }
+      if (wordCount < minimumWords) {
+        issues.push(`Use at least ${minimumWords} words (${minimumWords - wordCount} more needed).`);
+      }
+      if (!hasMention) {
+        issues.push('Mention another member with @username.');
+      }
+      if (!hasHashtag) {
+        issues.push('Add a hashtag such as #discussion.');
+      }
+
+      return issues;
+    }
+
+    function updateFeedback() {
+      const issues = analyzeDraft(textarea.value);
+      if (!textarea.value.trim()) {
+        feedback.textContent = 'Start writing to receive live revision feedback.';
+        feedback.className = 'small mt-2 text-muted';
+        return issues;
+      }
+
+      if (issues.length) {
+        feedback.innerHTML = '<strong>Please revise before posting:</strong><ul class="mb-0">' +
+          issues.map(issue => `<li>${issue}</li>`).join('') + '</ul>';
+        feedback.className = 'small mt-2 text-warning';
+      } else {
+        feedback.textContent = 'Ready to post — your contribution has useful detail and a discoverable topic.';
+        feedback.className = 'small mt-2 text-success';
+      }
+      return issues;
+    }
+
+    textarea.addEventListener('input', updateFeedback);
+    form.addEventListener('submit', (event) => {
+      if (updateFeedback().length) {
+        event.preventDefault();
+        textarea.focus();
+      }
+    });
+    updateFeedback();
+  })();
+</script>
+{% endif %}
+
+<div class="col-md-8 mx-auto mb-4">
+  <div class="alert alert-info shadow-sm" role="status">
+    <h5 class="alert-heading mb-1">Community activity this week</h5>
+    {% if community_social_proof.active_members %}
+      <p class="mb-1">
+        <strong>{{ community_social_proof.active_members }}</strong> members have made
+        <strong>{{ community_social_proof.contributions }}</strong> contributions in the community.
+      </p>
+      {% if community_social_proof.top_contributors %}
+        <small>
+          Recent contributors:
+          {% for contributor in community_social_proof.top_contributors %}
+            <a href="{{ url_for('user_profile', username=contributor.username) }}">{{ contributor.username }}</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </small>
+      {% endif %}
+      {% if session.get('user_id') %}
+        <p class="mb-0 mt-2">Join the conversation by commenting or reacting to a post below.</p>
+      {% else %}
+        <p class="mb-0 mt-2">Log in to join the conversation.</p>
+      {% endif %}
+    {% else %}
+      <p class="mb-0">No recent contributions yet. Start the conversation with a post or comment.</p>
+    {% endif %}
+  </div>
+</div>
 
 <h2 class="text-center border-bottom pb-2 mb-4"><span>Posts</span></h2>
 
@@ -54,10 +146,10 @@
       <div class="d-flex justify-content-between align-items-center">
         <h3 class="card-title mb-0">
           {% if entry.followed_poster %}
-          <a href="/u/{{ entry.post.user_id }}">{{ user_display(entry.post.username) }}<span class="text-success p-1" data-toggle="tooltip" data-placement="top" title="You are following this user"> ✓ </span>
+          <a href="{{ url_for('user_profile', username=entry.post.username) }}">{{ user_display(entry.post.username) }}<span class="text-success p-1" data-toggle="tooltip" data-placement="top" title="You are following this user"> ✓ </span>
 </a>
           {% else %}
-          <a href="/u/{{ entry.post.user_id }}">{{ user_display(entry.post.username) }} </a>
+          <a href="{{ url_for('user_profile', username=entry.post.username) }}">{{ user_display(entry.post.username) }} </a>
           {% endif %}
         </h3>
 
@@ -77,6 +169,16 @@
       </div>
       
       <p class="mt-2">{{ entry.post.content }}</p>
+
+      <div class="small text-muted mb-2" aria-label="Community participation">
+        {% if entry.social_proof.contributors %}
+          <strong>{{ entry.social_proof.contributors }}</strong>
+          member{% if entry.social_proof.contributors != 1 %}s{% endif %} have commented or reacted to this post
+          ({{ entry.social_proof.contributions }} contribution{% if entry.social_proof.contributions != 1 %}s{% endif %}).
+        {% else %}
+          No one has commented or reacted yet—be the first to join the discussion.
+        {% endif %}
+      </div>
 
       <!-- Reactions Display and Add Reaction Button -->
       <div class="d-flex align-items-center mt-2 mb-2">
@@ -129,9 +231,9 @@
      {% if entry.comments %}
       <hr>
       {% if entry.comments %}
-        <h6 class="mb-0">Comments ({{ entry.comments | count }})</h4>
+        <h6 class="mb-0">Comments ({{ entry.comments | count }})</h6>
       {% else %}
-        <h6 class="mb-0">Comments</h4>
+        <h6 class="mb-0">Comments</h6>
       {% endif %}
       <ul class="list-group list-group-flush shadow-none border-0">
         {% for comment in entry.comments[-2:] %}

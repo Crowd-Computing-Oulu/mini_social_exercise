@@ -2,10 +2,10 @@
 {% block content %}
 {% from "macros/user_macros.html.j2" import user_display%}
 
-<div class="container mt-5">
+<div class="container mt-5 profile-page">
 
   <!-- User Profile Information Card -->
-  <div class="card col-lg-8 mx-auto">
+  <div class="card profile-card mx-auto">
     <div class="row g-0 align-items-center">
       <div class="col-md-12">
         <div class="card-body">
@@ -48,6 +48,44 @@
       </div>
     </div>
   </div>
+
+  {# Claim 13 and Claim 15: show the member's goal, progress, deadline, and feedback. #}
+  {% if weekly_goal %}
+  <div class="card profile-goal-card mx-auto mt-4 shadow-sm">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <h3 class="card-title h5 mb-1">My weekly contribution goal</h3>
+          <p class="card-text mb-2">{{ weekly_goal.description }}</p>
+        </div>
+        {% if weekly_goal.completed %}
+          <span class="badge bg-success">Completed</span>
+        {% else %}
+          <span class="badge bg-primary">In progress</span>
+        {% endif %}
+      </div>
+      <div class="progress mb-2" role="progressbar" aria-label="Weekly goal progress" aria-valuenow="{{ weekly_goal.percentage }}" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-bar" style="width: {{ weekly_goal.percentage }}%">{{ weekly_goal.percentage }}%</div>
+      </div>
+      <p class="small mb-1">
+        Progress: <strong>{{ weekly_goal.current }} / {{ weekly_goal.target }}</strong>
+        {% if weekly_goal.completed %}
+          — You reached this week's goal.
+        {% else %}
+          — {{ weekly_goal.remaining }} more to go.
+        {% endif %}
+        <strong>{{ weekly_goal.days_label }}</strong> in this goal period.
+      </p>
+      <p class="small text-muted mb-0">
+        Other active members average {{ weekly_goal.average }} posts or comments this week.
+      </p>
+      {# This message is calculated from current activity, not static encouragement. #}
+      <div class="alert alert-info mt-3 mb-0 py-2" role="status">
+        <strong>Performance feedback:</strong> {{ weekly_goal.feedback }}
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <h3 class="text-center border-bottom pb-2 my-5"><span>Latest Posts</span></h3>
 
