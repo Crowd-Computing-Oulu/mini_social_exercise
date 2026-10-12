@@ -11,15 +11,80 @@
   <div class="card shadow-sm">
     <div class="card-body">
       <h5 class="card-title">Create a new post</h5>
-      <form action="{{ url_for('add_post') }}" method="POST">
+      <p class="small text-muted mb-2">Make your contribution useful by adding detail, mentioning a member, and using a topic hashtag.</p>
+      <form action="{{ url_for('add_post') }}" method="POST" id="new-post-form" novalidate>
         <div class="mb-3">
-          <textarea class="form-control" name="content" rows="3" placeholder="What's on your mind, {{ session.get('username') }}?" required></textarea>
+          <textarea class="form-control" name="content" id="new-post-content" rows="3" placeholder="What's on your mind, {{ session.get('username') }}?" required>{{ post_draft }}</textarea>
+          <div id="post-quality-feedback" class="small mt-2" aria-live="polite"></div>
         </div>
-        <button type="submit" class="btn btn-primary float-end">Post</button>
+        <button type="submit" class="btn btn-primary float-end" id="submit-post-button">Post</button>
       </form>
     </div>
   </div>
 </div>
+{% endif %}
+
+{% if session.get('user_id') %}
+<script>
+  (() => {
+    const form = document.getElementById('new-post-form');
+    const textarea = document.getElementById('new-post-content');
+    const feedback = document.getElementById('post-quality-feedback');
+    const minimumLength = {{ min_post_length }};
+    const minimumWords = {{ min_post_words }};
+
+    function analyzeDraft(value) {
+      const text = value.trim();
+      const wordCount = (text.match(/\b[\w']+\b/g) || []).length;
+      const hasMention = /(?<!\w)@[A-Za-z0-9_]+/.test(text);
+      const hasHashtag = /(?<!\w)#[A-Za-z0-9_]+/.test(text);
+      const issues = [];
+
+      if (text.length < minimumLength) {
+        issues.push(`Add more detail (${minimumLength - text.length} characters needed).`);
+      }
+      if (wordCount < minimumWords) {
+        issues.push(`Use at least ${minimumWords} words (${minimumWords - wordCount} more needed).`);
+      }
+      if (!hasMention) {
+        issues.push('Mention another member with @username.');
+      }
+      if (!hasHashtag) {
+        issues.push('Add a hashtag such as #discussion.');
+      }
+
+      return issues;
+    }
+
+    function updateFeedback() {
+      const issues = analyzeDraft(textarea.value);
+      if (!textarea.value.trim()) {
+        feedback.textContent = 'Start writing to receive live revision feedback.';
+        feedback.className = 'small mt-2 text-muted';
+        return issues;
+      }
+
+      if (issues.length) {
+        feedback.innerHTML = '<strong>Please revise before posting:</strong><ul class="mb-0">' +
+          issues.map(issue => `<li>${issue}</li>`).join('') + '</ul>';
+        feedback.className = 'small mt-2 text-warning';
+      } else {
+        feedback.textContent = 'Ready to post — your contribution has useful detail and a discoverable topic.';
+        feedback.className = 'small mt-2 text-success';
+      }
+      return issues;
+    }
+
+    textarea.addEventListener('input', updateFeedback);
+    form.addEventListener('submit', (event) => {
+      if (updateFeedback().length) {
+        event.preventDefault();
+        textarea.focus();
+      }
+    });
+    updateFeedback();
+  })();
+</script>
 {% endif %}
 
 <div class="col-md-8 mx-auto mb-4">

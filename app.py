@@ -99,6 +99,40 @@ REACTION_TYPES = list(REACTION_EMOJIS.keys())
 # Five posts/comments is intentionally measurable and challenging but still
 # achievable during one week.
 WEEKLY_GOAL_TARGET = 5
+MIN_POST_LENGTH = 30
+MIN_POST_WORDS = 5
+
+
+def analyze_post_quality(content):
+    """Return interactive revision feedback for a new post draft.
+
+    Claim 15 needs feedback to respond to the member's actual input. A post
+    is ready when it has enough detail, mentions another member, and includes
+    a hashtag that helps the community discover its topic.
+    """
+    text = content.strip() if isinstance(content, str) else ''
+    word_count = len(re.findall(r"\b[\w']+\b", text))
+    has_mention = bool(re.search(r'(?<!\w)@[A-Za-z0-9_]+', text))
+    has_hashtag = bool(re.search(r'(?<!\w)#[A-Za-z0-9_]+', text))
+
+    issues = []
+    if len(text) < MIN_POST_LENGTH:
+        issues.append(f'Add more detail (at least {MIN_POST_LENGTH} characters).')
+    if word_count < MIN_POST_WORDS:
+        issues.append(f'Use at least {MIN_POST_WORDS} words.')
+    if not has_mention:
+        issues.append('Mention another member with @username.')
+    if not has_hashtag:
+        issues.append('Add a hashtag such as #discussion.')
+
+    return {
+        'is_ready': not issues,
+        'issues': issues,
+        'length': len(text),
+        'word_count': word_count,
+        'has_mention': has_mention,
+        'has_hashtag': has_hashtag,
+    }
 
 
 def get_weekly_goal(user_id):
@@ -373,7 +407,10 @@ def feed():
                            per_page=POSTS_PER_PAGE, # Pass items per page
                            reaction_emojis=REACTION_EMOJIS,
                            reaction_types=REACTION_TYPES,
-                           community_social_proof=get_community_social_proof())
+                           community_social_proof=get_community_social_proof(),
+                           post_draft=session.get('post_draft', ''),
+                           min_post_length=MIN_POST_LENGTH,
+                           min_post_words=MIN_POST_WORDS)
 
 @app.route('/posts/new', methods=['POST'])
 def add_post():
@@ -388,6 +425,18 @@ def add_post():
     # Get content from the submitted form
     content = request.form.get('content')
 
+    # Enforce the same quality rules used by the live form so a request that
+    # bypasses JavaScript still receives revision guidance.
+    quality = analyze_post_quality(content)
+    if not quality['is_ready']:
+        session['post_draft'] = content or ''
+        flash(
+            'Please revise your post before submitting: '
+            + ' '.join(quality['issues']),
+            'warning'
+        )
+        return redirect(url_for('feed'))
+
     # Pass the user's content through the moderation function
     moderated_content = content
 
@@ -397,6 +446,7 @@ def add_post():
         db.execute('INSERT INTO posts (user_id, content) VALUES (?, ?)',
                    (user_id, moderated_content))
         db.commit()
+        session.pop('post_draft', None)
         # Refresh the goal immediately so the success message gives current
         # Claim 15 feedback after the contribution is recorded.
         goal = get_weekly_goal(user_id)
@@ -1050,6 +1100,21 @@ def loop_color(user_id):
 # ----- Functions to be implemented are below
 # Coding Assignment #2
 
+
+def _parse_database_datetime(value):
+    """Return a database timestamp as a datetime object when possible."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).replace(tzinfo=None)
+    return None
+
+
+def _average_score(scores):
+    """Return the average of content scores, or zero when there is no content."""
+    return sum(scores) / len(scores) if scores else 0.0
+
+
 # Assignment 2.2
 def user_risk_analysis(user_id):
     """
@@ -1065,9 +1130,47 @@ def user_risk_analysis(user_id):
         Then, navigate to the /admin endpoint. (http://localhost:8080/admin)
     """
     
-    score = 0
+    user = query_db(
+        'SELECT profile, created_at FROM users WHERE id = ?',
+        (user_id,),
+        one=True
+    )
+    if not user:
+        return 0.0
 
-    return score;
+    _, profile_score = moderate_content(user['profile'] or '')
+
+    posts = query_db(
+        'SELECT content FROM posts WHERE user_id = ?',
+        (user_id,)
+    ) or []
+    post_scores = [moderate_content(post['content'])[1] for post in posts]
+
+    comments = query_db(
+        'SELECT content FROM comments WHERE user_id = ?',
+        (user_id,)
+    ) or []
+    comment_scores = [moderate_content(comment['content'])[1] for comment in comments]
+
+    # Posts have three times the weight of profile and comment content.
+    content_risk_score = (
+        profile_score
+        + (_average_score(post_scores) * 3)
+        + _average_score(comment_scores)
+    )
+
+    created_at = _parse_database_datetime(user['created_at'])
+    age_days = (datetime.utcnow() - created_at).days if created_at else 0
+    age_days = max(0, age_days)
+    if age_days < 7:
+        age_multiplier = 1.5
+    elif age_days < 30:
+        age_multiplier = 1.2
+    else:
+        age_multiplier = 1.0
+
+    # The user-level score is capped as required by the risk specification.
+    return min(content_risk_score * age_multiplier, 5.0)
 
     
 # Assignment 2.1
@@ -1088,10 +1191,72 @@ def moderate_content(content):
     Then, navigate to the /admin endpoint. (http://localhost:8080/admin)
     """
 
-    moderated_content = content
-    score = 0
-    
-    return moderated_content, score
+    if content is None:
+        return '', 0.0
+    if not isinstance(content, str):
+        content = str(content)
+    if not content:
+        return '', 0.0
+
+    # Tier 1 and Tier 2 are terminal checks: severe content is removed
+    # completely and must not receive additional lower-tier scores.
+    tier1_pattern = re.compile(
+        r'(?<!\w)(?:' + '|'.join(re.escape(word) for word in TIER1_WORDS) + r')(?!\w)',
+        re.IGNORECASE
+    ) if TIER1_WORDS else None
+    if tier1_pattern and tier1_pattern.search(content):
+        return '[content removed due to severe violation]', 5.0
+
+    tier2_pattern = re.compile(
+        r'(?<!\w)(?:' + '|'.join(re.escape(phrase) for phrase in TIER2_PHRASES) + r')(?!\w)',
+        re.IGNORECASE
+    ) if TIER2_PHRASES else None
+    if tier2_pattern and tier2_pattern.search(content):
+        return '[content removed due to spam/scam policy]', 5.0
+
+    original_content = content
+    score = 0.0
+
+    # Replace every Tier 3 occurrence with an equally long mask while counting
+    # occurrences rather than distinct vocabulary items.
+    if TIER3_WORDS:
+        tier3_pattern = re.compile(
+            r'(?<!\w)(?:' + '|'.join(
+                sorted((re.escape(word) for word in TIER3_WORDS), key=len, reverse=True)
+            ) + r')(?!\w)',
+            re.IGNORECASE
+        )
+        tier3_matches = list(tier3_pattern.finditer(content))
+        score += len(tier3_matches) * 2.0
+        content = tier3_pattern.sub(
+            lambda match: '*' * len(match.group(0)),
+            content
+        )
+
+    # Match common HTTP(S) and www URLs. URL punctuation is left outside the
+    # match where possible so sentences retain their natural punctuation.
+    url_pattern = re.compile(r'(?i)\b(?:https?://|www\.)[^\s<>()]+')
+    urls = url_pattern.findall(content)
+    score += len(urls) * 2.0
+
+    def replace_url(match):
+        url = match.group(0)
+        trailing = ''
+        while url and url[-1] in '.,!?;:':
+            trailing = url[-1] + trailing
+            url = url[:-1]
+        return '[link removed]' + trailing
+
+    content = url_pattern.sub(replace_url, content)
+
+    # Capitalization is measured from the original text so masking or URL
+    # replacement cannot change the uppercase ratio.
+    letters = [character for character in original_content if character.isalpha()]
+    uppercase_count = sum(character.isupper() for character in letters)
+    if len(letters) > 15 and uppercase_count / len(letters) > 0.70:
+        score += 0.5
+
+    return content, score
 
 # Coding Assignment #3
 # Assignment 3.1
