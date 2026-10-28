@@ -2,11 +2,12 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.fernet import Fernet
 import collections
+import math 
 import json
 import sqlite3
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.secret_key = '123456789' 
@@ -26,6 +27,19 @@ MODERATION_CONFIG = json.loads(decrypted_data)
 TIER1_WORDS = MODERATION_CONFIG['categories']['tier1_severe_violations']['words']
 TIER2_PHRASES = MODERATION_CONFIG['categories']['tier2_spam_scams']['phrases']
 TIER3_WORDS = MODERATION_CONFIG['categories']['tier3_mild_profanity']['words']
+POSITIVE_REACTIONS = ('like', 'love', 'laugh', 'wow')
+REC_STOP_WORDS = {
+    'this', 'that', 'with', 'from', 'have', 'your', 'about', 'what', 'when',
+    'where', 'which', 'will', 'they', 'them', 'there', 'their', 'would',
+    'could', 'should', 'into', 'just', 'like', 'some', 'more', 'very',
+    'been', 'also', 'than', 'then', 'here'
+}
+ 
+ 
+def _keywords(text):
+    """Lower-cased words of 4+ letters, without stop words."""
+    words = re.findall(r'\b[a-zA-Z]{4,}\b', (text or '').lower())
+    return [w for w in words if w not in REC_STOP_WORDS]
 
 def get_db():
     """
@@ -94,6 +108,182 @@ REACTION_EMOJIS = {
 }
 REACTION_TYPES = list(REACTION_EMOJIS.keys())
 
+def get_personalized_contributions(user_id, limit=5):
+
+    if not user_id:
+        return []
+
+    commented_posts = query_db("""
+        SELECT p.content
+        FROM comments c
+        JOIN posts p ON c.post_id = p.id
+        WHERE c.user_id = ?
+    """, (user_id,))
+
+    reacted_posts = query_db("""
+        SELECT p.content
+        FROM reactions r
+        JOIN posts p ON r.post_id = p.id
+        WHERE r.user_id = ?
+    """, (user_id,))
+
+    history = commented_posts + reacted_posts
+
+    user_topics = collections.Counter()
+
+    stop_words = {
+        'this', 'that', 'with', 'from', 'have', 'your',
+        'about', 'what', 'when', 'where', 'which', 'will',
+        'they', 'them', 'there', 'their', 'would', 'could',
+        'should', 'into', 'just', 'like', 'some', 'more',
+        'very', 'been', 'also', 'than', 'then', 'here'
+    }
+
+    for item in history:
+        words = re.findall(r'\b[a-zA-Z]{4,}\b', item['content'].lower())
+
+        for word in words:
+            if word not in stop_words:
+                user_topics[word] += 1
+
+    if not user_topics:
+        return []
+
+    candidate_posts = query_db("""
+        SELECT p.id, p.content, p.created_at,
+               u.username, u.id AS user_id
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        WHERE p.user_id != ?
+          AND p.id NOT IN (
+              SELECT post_id
+              FROM reactions
+              WHERE user_id = ?
+          )
+          AND p.id NOT IN (
+              SELECT post_id
+              FROM comments
+              WHERE user_id = ?
+          )
+        ORDER BY p.created_at DESC
+        LIMIT 100
+    """, (user_id, user_id, user_id))
+
+    scored_posts = []
+
+    for post in candidate_posts:
+        words = set(
+            re.findall(
+                r'\b[a-zA-Z]{4,}\b',
+                post['content'].lower()
+            )
+        )
+
+        score = sum(user_topics[word] for word in words if word in user_topics)
+
+        if score > 0:
+            post_dict = dict(post)
+            post_dict['match_score'] = score
+            scored_posts.append(post_dict)
+
+    scored_posts.sort(
+        key=lambda item: (item['match_score'], item['created_at']),
+        reverse=True
+    )
+
+    return scored_posts[:limit]
+
+
+def get_contribution_progress(user_id):
+   
+    if not user_id:
+        return {
+            'points': 0,
+            'goal': 10,
+            'remaining': 10,
+            'percentage': 0
+        }
+
+    week_start = datetime.now() - timedelta(days=7)
+
+    posts = query_db("""
+        SELECT COUNT(*) AS count
+        FROM posts
+        WHERE user_id = ?
+          AND created_at >= ?
+    """, (user_id, week_start))
+
+    comments = query_db("""
+        SELECT COUNT(*) AS count
+        FROM comments
+        WHERE user_id = ?
+          AND created_at >= ?
+    """, (user_id, week_start))
+
+    reactions = query_db("""
+        SELECT COUNT(*) AS count
+        FROM reactions
+        WHERE user_id = ?
+    """, (user_id,))
+
+    post_count = posts[0]['count'] if posts else 0
+    comment_count = comments[0]['count'] if comments else 0
+    reaction_count = reactions[0]['count'] if reactions else 0
+
+    post_points = post_count * 3
+    comment_points = comment_count * 2
+    reaction_points = reaction_count
+
+    points = post_points + comment_points + reaction_points
+
+    goal = 10
+
+    percentage = min(
+        100,
+        int((points / goal) * 100)
+    )
+
+    remaining = max(
+        0,
+        goal - points
+    )
+
+    return {
+        'points': points,
+        'goal': goal,
+        'remaining': remaining,
+        'percentage': percentage
+    }
+
+def get_friend_suggestions(user_id, limit=5):
+
+    if not user_id:
+        return []
+
+    suggestions = query_db("""
+        SELECT
+            candidate.id,
+            candidate.username,
+            candidate.profile,
+            COUNT(DISTINCT connection.followed_id) AS mutual_count
+        FROM follows connection
+        JOIN follows second_connection
+            ON connection.followed_id = second_connection.follower_id
+        JOIN users candidate
+            ON candidate.id = second_connection.followed_id
+        WHERE connection.follower_id = ?
+          AND candidate.id != ?
+          AND candidate.id NOT IN (
+              SELECT followed_id
+              FROM follows
+              WHERE follower_id = ?
+          )
+        GROUP BY candidate.id, candidate.username, candidate.profile
+        ORDER BY mutual_count DESC
+        LIMIT ?
+    """, (user_id, user_id, user_id, limit))
+
+    return suggestions
 
 @app.route('/')
 def feed():
@@ -110,6 +300,30 @@ def feed():
     offset = (page - 1) * POSTS_PER_PAGE
 
     current_user_id = session.get('user_id')
+
+    contribution_suggestions = []
+
+    contribution_progress = {
+        'points': 0,
+        'goal': 10,
+        'remaining': 10,
+        'percentage': 0
+    }
+
+    friend_suggestions = []
+
+    if current_user_id:
+        contribution_suggestions = get_personalized_contributions(
+            current_user_id
+        )
+
+        contribution_progress = get_contribution_progress(
+            current_user_id
+        )
+
+        friend_suggestions = get_friend_suggestions(
+            current_user_id
+        )
     params = []
 
     #  2. Build the Query 
@@ -199,7 +413,10 @@ def feed():
                            page=page, # Pass current page number
                            per_page=POSTS_PER_PAGE, # Pass items per page
                            reaction_emojis=REACTION_EMOJIS,
-                           reaction_types=REACTION_TYPES)
+                           reaction_types=REACTION_TYPES,
+                           contribution_suggestions=contribution_suggestions,
+                           contribution_progress=contribution_progress,
+                           friend_suggestions=friend_suggestions)
 
 @app.route('/posts/new', methods=['POST'])
 def add_post():
@@ -210,6 +427,11 @@ def add_post():
     if not user_id:
         flash('You must be logged in to create a post.', 'danger')
         return redirect(url_for('login'))
+
+    access = get_access_level(user_id)
+    if not access['can_post']:
+        flash(access['reason'], 'warning')
+        return redirect(url_for('sandbox') if access['level'] == 0 else url_for('feed'))
 
     # Get content from the submitted form
     content = request.form.get('content')
@@ -871,46 +1093,135 @@ def loop_color(user_id):
 
 # Assignment 2.2
 def user_risk_analysis(user_id):
-    """
-    Args:
-        user_id: The ID of the user on which we perform risk analysis.
+    user = query_db(
+        "SELECT id, profile, created_at FROM users WHERE id = ?",
+        (user_id,),
+        one=True
+    )
 
-    Returns:
-        A float number score showing the risk associated with this user. There are no strict rules or bounds to this score, other than that a score of less than 1.0 means no risk, 1.0 to 3.0 is low risk, 3.0 to 5.0 is medium risk and above 5.0 is high risk. (An upper bound of 5.0 is applied to this score elsewhere in the codebase) 
-        
-        You will be able to check the scores by logging in with the administrator account:
-            username: admin
-            password: admin
-        Then, navigate to the /admin endpoint. (http://localhost:8080/admin)
-    """
-    
-    score = 0
+    if not user:
+        return 0.0
 
-    return score;
+    _, profile_score = moderate_content(user["profile"] or "")
+
+    posts = query_db(
+        "SELECT content FROM posts WHERE user_id = ?",
+        (user_id,)
+    )
+
+    post_scores = [
+        moderate_content(post["content"] or "")[1]
+        for post in posts
+    ]
+
+    average_post_score = (
+        sum(post_scores) / len(post_scores)
+        if post_scores else 0.0
+    )
+
+    comments = query_db(
+        "SELECT content FROM comments WHERE user_id = ?",
+        (user_id,)
+    )
+
+    comment_scores = [
+        moderate_content(comment["content"] or "")[1]
+        for comment in comments
+    ]
+
+    average_comment_score = (
+        sum(comment_scores) / len(comment_scores)
+        if comment_scores else 0.0
+    )
+
+    content_risk_score = (
+        profile_score
+        + (average_post_score * 3)
+        + average_comment_score
+    )
+
+    account_age_days = (
+        datetime.utcnow() - user["created_at"]
+    ).days
+
+    if account_age_days < 7:
+        content_risk_score *= 1.5
+    elif account_age_days < 30:
+        content_risk_score *= 1.2
+
+    return min(5.0, content_risk_score)
 
     
 # Assignment 2.1
 def moderate_content(content):
-    """
-    Args
-        content: the text content of a post or comment to be moderated.
-        
-    Returns: 
-        A tuple containing the moderated content (string) and a severity score (float). There are no strict rules or bounds to the severity score, other than that a score of less than 1.0 means no risk, 1.0 to 3.0 is low risk, 3.0 to 5.0 is medium risk and above 5.0 is high risk.
     
-    This function moderates a string of content and calculates a severity score based on
-    rules loaded from the 'censorship.dat' file. These are already loaded as TIER1_WORDS, TIER2_PHRASES and TIER3_WORDS. Tier 1 corresponds to strong profanity, Tier 2 to scam/spam phrases and Tier 3 to mild profanity.
-    
-    You will be able to check the scores by logging in with the administrator account:
-            username: admin
-            password: admin
-    Then, navigate to the /admin endpoint. (http://localhost:8080/admin)
-    """
+    import re
+
+    if not content:
+        return content or "", 0.0
 
     moderated_content = content
-    score = 0
-    
-    return moderated_content, score
+    score = 0.0
+
+    for word in TIER1_WORDS:
+        pattern = r"\b" + re.escape(word) + r"\b"
+
+        if re.search(pattern, content, flags=re.IGNORECASE):
+            return (
+                "[content removed due to severe violation]",
+                5.0
+            )
+
+    for phrase in TIER2_PHRASES:
+        pattern = re.escape(phrase)
+
+        if re.search(pattern, content, flags=re.IGNORECASE):
+            return (
+                "[content removed due to spam/scam policy]",
+                5.0
+            )
+
+    for word in TIER3_WORDS:
+        pattern = r"\b" + re.escape(word) + r"\b"
+
+        matches = list(re.finditer(
+            pattern,
+            moderated_content,
+            flags=re.IGNORECASE
+        ))
+
+        for match in reversed(matches):
+            replacement = "*" * len(match.group(0))
+
+            moderated_content = (
+                moderated_content[:match.start()]
+                + replacement
+                + moderated_content[match.end():]
+            )
+
+        score += 2.0 * len(matches)
+
+    url_pattern = r"https?://[^\s]+|www\.[^\s]+"
+    urls = list(re.finditer(url_pattern, moderated_content))
+
+    for match in reversed(urls):
+        moderated_content = (
+            moderated_content[:match.start()]
+            + "[link removed]"
+            + moderated_content[match.end():]
+        )
+
+    score += 2.0 * len(urls)
+
+    letters = [char for char in content if char.isalpha()]
+
+    if len(letters) > 15:
+        uppercase_count = sum(char.isupper() for char in letters)
+
+        if uppercase_count / len(letters) > 0.70:
+            score += 0.5
+
+    return moderated_content, float(score)
 
 # Coding Assignment #3
 # Assignment 3.1
@@ -934,9 +1245,297 @@ def recommend(user_id, filter_following):
     - https://www.researchgate.net/publication/227268858_Recommender_Systems_Handbook
     """
 
-    recommended_posts = {} 
+    RESULT_SIZE = 5
+    CANDIDATE_POOL = 300        
+    W_FOLLOWED_AUTHOR = 2.0     
+    W_LIKED_AUTHOR = 0.5        
+    W_FRIEND_LIKE = 0.5        
+    W_POPULARITY = 0.05         
+ 
+    popularity_join = """
+        LEFT JOIN (SELECT post_id, COUNT(*) AS total
+                   FROM reactions GROUP BY post_id) r ON p.id = r.post_id
+    """
+ 
+    if not user_id:
+        rows = query_db(f"""
+            SELECT p.id, p.content, p.created_at, u.username, u.id AS user_id,
+                   IFNULL(r.total, 0) AS total_reactions
+            FROM posts p
+            JOIN users u ON p.user_id = u.id
+            {popularity_join}
+            ORDER BY total_reactions DESC, p.created_at DESC
+            LIMIT ?
+        """, (RESULT_SIZE,)) or []
+        posts = [dict(row) for row in rows]
+        posts.sort(key=lambda item: item['created_at'], reverse=True)
+        return posts
+ 
+    marks = ','.join('?' * len(POSITIVE_REACTIONS))
+    liked_rows = query_db(f"""
+        SELECT p.content, p.user_id
+        FROM reactions r
+        JOIN posts p ON r.post_id = p.id
+        WHERE r.user_id = ? AND r.reaction_type IN ({marks})
+    """, [user_id] + list(POSITIVE_REACTIONS)) or []
+ 
+    topic_counts = collections.Counter()
+    for row in liked_rows:
+        topic_counts.update(_keywords(row['content']))
+    max_count = max(topic_counts.values()) if topic_counts else 1
+    topic_weight = {w: c / max_count for w, c in topic_counts.items()}
+ 
+    liked_authors = collections.Counter(row['user_id'] for row in liked_rows)
+ 
+    followed_ids = [
+        row['followed_id'] for row in
+        (query_db('SELECT followed_id FROM follows WHERE follower_id = ?',
+                  (user_id,)) or [])
+    ]
+ 
+    friend_likes = {}
+    if followed_ids:
+        id_marks = ','.join('?' * len(followed_ids))
+        rows = query_db(f"""
+            SELECT post_id, COUNT(*) AS c
+            FROM reactions
+            WHERE user_id IN ({id_marks}) AND reaction_type IN ({marks})
+            GROUP BY post_id
+        """, followed_ids + list(POSITIVE_REACTIONS)) or []
+        friend_likes = {row['post_id']: row['c'] for row in rows}
+ 
+    follow_filter = ""
+    args = [user_id, user_id, user_id]
+    if filter_following:
+        follow_filter = ("AND p.user_id IN "
+                         "(SELECT followed_id FROM follows WHERE follower_id = ?)")
+        args.append(user_id)
+    args.append(CANDIDATE_POOL)
+ 
+    candidates = query_db(f"""
+        SELECT p.id, p.content, p.created_at, u.username, u.id AS user_id,
+               IFNULL(r.total, 0) AS total_reactions
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        {popularity_join}
+        WHERE p.user_id != ?
+          AND p.id NOT IN (SELECT post_id FROM reactions WHERE user_id = ?)
+          AND p.id NOT IN (SELECT post_id FROM comments  WHERE user_id = ?)
+          {follow_filter}
+        ORDER BY p.created_at DESC
+        LIMIT ?
+    """, args) or []
+ 
+    scored = []
+    for post in candidates:
+        words = set(_keywords(post['content']))
+ 
+        content_score = 0.0
+        if words and topic_weight:
+            content_score = (sum(topic_weight.get(w, 0.0) for w in words)
+                             / math.sqrt(len(words)))
+ 
+        score = content_score
+        if post['user_id'] in followed_ids:
+            score += W_FOLLOWED_AUTHOR
+        score += W_LIKED_AUTHOR * min(liked_authors.get(post['user_id'], 0), 3)
+        score += W_FRIEND_LIKE * min(friend_likes.get(post['id'], 0), 3)
+        score += W_POPULARITY * min(post['total_reactions'], 10)
+ 
+        post_dict = dict(post)
+        post_dict['rec_score'] = round(score, 3)
+        scored.append(post_dict)
+ 
+    scored.sort(key=lambda item: (item['rec_score'], item['created_at']),
+                reverse=True)
+    top = scored[:RESULT_SIZE]
+    top.sort(key=lambda item: item['created_at'], reverse=True)
+    return top
 
-    return recommended_posts;
+def init_extra_tables():
+    """Creates the table used by the sandbox feature if it is missing."""
+    conn = sqlite3.connect(DATABASE)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sandbox_posts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+init_extra_tables()
+
+NEWCOMER_UNLOCK = 3
+TRUSTED_UNLOCK = 10
+TRUSTED_MIN_DAYS = 7
+DAILY_POST_LIMIT = 5
+
+ACCESS_LABELS = {0: 'Newcomer', 1: 'Contributor', 2: 'Trusted member'}
+
+
+def _to_datetime(value):
+    """SQLite may give us a datetime or a string; always return a datetime."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+    return datetime.utcnow()
+
+
+def get_access_level(user_id):
+    """Returns a dict describing what the user is currently allowed to do."""
+    if not user_id:
+        return None
+
+    user = query_db('SELECT username, created_at FROM users WHERE id = ?',
+                    (user_id,), one=True)
+    if not user:
+        return None
+
+    comments = query_db('SELECT COUNT(*) AS c FROM comments WHERE user_id = ?',
+                        (user_id,), one=True)
+    reactions = query_db('SELECT COUNT(*) AS c FROM reactions WHERE user_id = ?',
+                         (user_id,), one=True)
+    interactions = (comments['c'] if comments else 0) + \
+                   (reactions['c'] if reactions else 0)
+
+    age_days = (datetime.utcnow() - _to_datetime(user['created_at'])).days
+
+    if user['username'] == 'admin' or (interactions >= TRUSTED_UNLOCK
+                                       and age_days >= TRUSTED_MIN_DAYS):
+        level = 2
+    elif interactions >= NEWCOMER_UNLOCK:
+        level = 1
+    else:
+        level = 0
+
+    goal = NEWCOMER_UNLOCK if level == 0 else TRUSTED_UNLOCK
+    remaining = max(0, goal - interactions)
+    percentage = 100 if level == 2 else min(100, int(interactions / goal * 100))
+    days_left = max(0, TRUSTED_MIN_DAYS - age_days)
+
+    posts_today = 0
+    if level == 1:
+        since = (datetime.utcnow() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+        row = query_db('SELECT COUNT(*) AS c FROM posts '
+                       'WHERE user_id = ? AND created_at >= ?',
+                       (user_id, since), one=True)
+        posts_today = row['c'] if row else 0
+
+    if level == 0:
+        can_post = False
+        reason = (f"Newcomers cannot publish posts yet. Make {remaining} more "
+                  f"comment(s) or reaction(s) to unlock posting, and practise "
+                  f"in the sandbox meanwhile.")
+    elif level == 1 and posts_today >= DAILY_POST_LIMIT:
+        can_post = False
+        reason = (f"Contributors can publish {DAILY_POST_LIMIT} posts per 24 hours. "
+                  f"Keep interacting to become a trusted member.")
+    else:
+        can_post = True
+        reason = ''
+
+    return {
+        'level': level,
+        'label': ACCESS_LABELS[level],
+        'interactions': interactions,
+        'goal': goal,
+        'remaining': remaining,
+        'percentage': percentage,
+        'days_left': days_left,
+        'can_post': can_post,
+        'posts_today': posts_today,
+        'daily_limit': DAILY_POST_LIMIT if level == 1 else None,
+        'reason': reason,
+    }
+
+
+@app.context_processor
+def inject_access_info():
+    """Makes `access_info` available in EVERY template (feed, profile, ...)."""
+    return {'access_info': get_access_level(session.get('user_id'))}
+
+
+SANDBOX_TTL_HOURS = 12
+SANDBOX_MAX_POSTS = 20
+
+
+@app.route('/sandbox', methods=['GET', 'POST'])
+def sandbox():
+    user_id = session.get('user_id')
+    if not user_id:
+        flash('You must be logged in to use the sandbox.', 'danger')
+        return redirect(url_for('login'))
+
+    cutoff = (datetime.utcnow() - timedelta(hours=SANDBOX_TTL_HOURS)) \
+        .strftime('%Y-%m-%d %H:%M:%S')
+    query_db('DELETE FROM sandbox_posts WHERE created_at < ?',
+             (cutoff,), commit=True)
+
+    if request.method == 'POST':
+        content = (request.form.get('content') or '').strip()
+        count = query_db('SELECT COUNT(*) AS c FROM sandbox_posts WHERE user_id = ?',
+                         (user_id,), one=True)['c']
+        if not content:
+            flash('Write something to try out first.', 'warning')
+        elif len(content) > 500:
+            flash('Practice posts are limited to 500 characters.', 'warning')
+        elif count >= SANDBOX_MAX_POSTS:
+            flash('Your sandbox is full - clear it to keep practising.', 'warning')
+        else:
+            query_db('INSERT INTO sandbox_posts (user_id, content) VALUES (?, ?)',
+                     (user_id, content), commit=True)
+            flash('Practice post saved. Only you can see it.', 'success')
+        return redirect(url_for('sandbox'))
+
+    rows = query_db('SELECT id, content, created_at FROM sandbox_posts '
+                    'WHERE user_id = ? ORDER BY id DESC', (user_id,)) or []
+
+    practice_posts = []
+    for row in rows:
+        preview, score = moderate_content(row['content'])
+        if score >= 5:
+            risk = 'HIGH'
+        elif score >= 3:
+            risk = 'MEDIUM'
+        elif score >= 1:
+            risk = 'LOW'
+        else:
+            risk = 'NONE'
+        practice_posts.append({
+            'id': row['id'],
+            'original': row['content'],
+            'preview': preview,
+            'changed': preview != row['content'],
+            'score': score,
+            'risk': risk,
+            'created_at': row['created_at'],
+        })
+
+    return render_template('sandbox.html.j2',
+                           practice_posts=practice_posts,
+                           ttl_hours=SANDBOX_TTL_HOURS,
+                           max_posts=SANDBOX_MAX_POSTS)
+
+
+@app.route('/sandbox/clear', methods=['POST'])
+def sandbox_clear():
+    """Lets the user wipe their own practice posts."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return redirect(url_for('login'))
+    query_db('DELETE FROM sandbox_posts WHERE user_id = ?', (user_id,), commit=True)
+    flash('Sandbox cleared.', 'info')
+    return redirect(url_for('sandbox'))
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)

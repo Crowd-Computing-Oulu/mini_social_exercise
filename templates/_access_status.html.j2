@@ -1,0 +1,32 @@
+{# Design Claim 25 - shows the user's access level and progress.
+   Include with:  {% include '_access_status.html.j2' %}
+   `access_info` is injected into every template by the context processor. #}
+{% if access_info %}
+<div style="background:#fff; border-radius:10px; padding:14px; margin-bottom:16px;
+            box-shadow:0 1px 3px rgba(0,0,0,.1);">
+  <strong>Access level: {{ access_info.label }}</strong>
+  {% if access_info.level < 2 %}
+    <div style="background:#e5e7eb; border-radius:6px; height:10px; margin:8px 0;">
+      <div style="background:#3b6fd4; height:10px; border-radius:6px;
+                  width:{{ access_info.percentage }}%;"></div>
+    </div>
+    <div style="font-size:14px; color:#555;">
+      {{ access_info.interactions }}/{{ access_info.goal }} interactions (comments + reactions)
+      {% if access_info.level == 0 %}
+        to unlock posting.
+      {% else %}
+        to become a trusted member
+        {% if access_info.days_left > 0 %}(and {{ access_info.days_left }} more day(s) of membership){% endif %}.
+        Posts today: {{ access_info.posts_today }}/{{ access_info.daily_limit }}.
+      {% endif %}
+    </div>
+    {% if access_info.level == 0 %}
+      <div style="margin-top:6px; font-size:14px;">
+        Meanwhile, practise in the <a href="{{ url_for('sandbox') }}">sandbox</a>.
+      </div>
+    {% endif %}
+  {% else %}
+    <div style="font-size:14px; color:#555;">Full posting access unlocked.</div>
+  {% endif %}
+</div>
+{% endif %}

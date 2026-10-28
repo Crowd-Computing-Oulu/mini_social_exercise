@@ -23,7 +23,145 @@
 {% endif %}
 
 <h2 class="text-center border-bottom pb-2 mb-4"><span>Posts</span></h2>
+{% if session.get('user_id') %}
 
+<div class="col-md-8 mx-auto mb-4">
+  <div class="card shadow-sm">
+    <div class="card-body">
+
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <h5 class="card-title mb-1">
+            Weekly Contribution Goal
+          </h5>
+
+          <small class="text-muted">
+            Keep contributing to the community.
+          </small>
+        </div>
+
+        <strong>
+          {{ contribution_progress.points }}
+          /
+          {{ contribution_progress.goal }}
+          points
+        </strong>
+      </div>
+
+      <div class="progress mt-3" style="height: 20px;">
+        <div
+          class="progress-bar"
+          role="progressbar"
+          style="width: {{ contribution_progress.percentage }}%;"
+          aria-valuenow="{{ contribution_progress.percentage }}"
+          aria-valuemin="0"
+          aria-valuemax="100">
+
+          {{ contribution_progress.percentage }}%
+
+        </div>
+      </div>
+
+      {% if contribution_progress.remaining > 0 %}
+
+      <p class="small text-muted mt-2 mb-0">
+        {{ contribution_progress.remaining }}
+        more points to reach your weekly goal.
+      </p>
+
+      {% else %}
+
+      <p class="small text-success mt-2 mb-0">
+        Goal completed! Keep contributing.
+      </p>
+
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+
+{% if contribution_suggestions %}
+
+<div class="col-md-8 mx-auto mb-4">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h5 class="card-title">
+        Suggested Contributions
+      </h5>
+      <p class="text-muted small">
+        These posts match topics you have previously interacted with.
+      </p>
+      {% for suggestion in contribution_suggestions %}
+      <div class="border rounded p-3 mb-2">
+        <div class="d-flex justify-content-between">
+          <strong>
+            {{ suggestion.username }}
+          </strong>
+          <small class="text-muted">
+            {{ suggestion.created_at|datetimeformat }}
+          </small>
+        </div>
+        <p class="mb-2 mt-2">
+          {{ suggestion.content }}
+        </p>
+        <div class="d-flex justify-content-between align-items-center">
+          <small class="text-muted">
+            Matches your interests
+          </small>
+          <a
+            href="{{ url_for('post_detail', post_id=suggestion.id) }}"
+            class="btn btn-sm btn-primary">
+            Contribute
+          </a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if friend_suggestions %}
+<div class="col-md-8 mx-auto mb-4">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h5 class="card-title">
+        People You May Know
+      </h5>
+      <p class="text-muted small">
+        Suggested through people you already follow.
+      </p>
+      {% for person in friend_suggestions %}
+      <div
+        class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+        <div>
+          <a
+            href="{{ url_for('user_profile', username=person.username) }}"
+            class="fw-bold text-decoration-none">
+            {{ person.username }}
+          </a>
+          <div class="small text-muted">
+            {{ person.mutual_count }}
+            mutual connection{% if person.mutual_count != 1 %}s{% endif %}
+          </div>
+        </div>
+        <form
+          action="{{ url_for('follow_user', user_id=person.id) }}"
+          method="POST">
+          <button
+            type="submit"
+            class="btn btn-sm btn-outline-primary">
+            Follow
+          </button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endif %}
 <div class="mb-4 text-center">
 
 <!-- This is the 'sort' filter for New / Popular / Recommended -->

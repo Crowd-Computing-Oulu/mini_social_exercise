@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Practice Sandbox</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#f4f5f7; color:#222; margin:0; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+    .card { background:#fff; border-radius:10px; padding:16px; margin-bottom:16px;
+            box-shadow:0 1px 3px rgba(0,0,0,.1); }
+    textarea { width:100%; box-sizing:border-box; min-height:90px; padding:8px; font:inherit; }
+    button { padding:8px 16px; border:0; border-radius:6px; background:#3b6fd4;
+             color:#fff; cursor:pointer; font:inherit; }
+    button.secondary { background:#888; }
+    .flash { padding:10px 14px; border-radius:6px; margin-bottom:10px; }
+    .flash.success { background:#dff3e3; } .flash.danger { background:#f8d7da; }
+    .flash.warning { background:#fff3cd; } .flash.info { background:#dbeafe; }
+    .badge { font-size:12px; padding:2px 8px; border-radius:10px; background:#eee; }
+    .HIGH { background:#f8d7da; } .MEDIUM { background:#ffe5b4; }
+    .LOW { background:#fff3cd; } .NONE { background:#dff3e3; }
+    .muted { color:#666; font-size:14px; }
+    .changed { border-left:4px solid #e0a800; padding-left:10px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <p><a href="{{ url_for('feed') }}">&larr; Back to the feed</a></p>
+  <h1>Practice Sandbox</h1>
+  <p class="muted">
+    A safe place to try out posting. Nothing written here is visible to anyone
+    else, and everything is deleted automatically after {{ ttl_hours }} hours.
+    Your text is checked with the same moderation rules as the real feed, so you
+    can see what would happen before you post for real.
+  </p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  {% include '_access_status.html.j2' %}
+
+  <div class="card">
+    <form method="post" action="{{ url_for('sandbox') }}">
+      <textarea name="content" maxlength="500"
+                placeholder="Try writing a post... (max 500 characters)"></textarea>
+      <p><button type="submit">Try it out</button></p>
+    </form>
+  </div>
+
+  <h2>Your practice posts ({{ practice_posts|length }}/{{ max_posts }})</h2>
+  {% if not practice_posts %}
+    <p class="muted">Nothing here yet.</p>
+  {% endif %}
+
+  {% for p in practice_posts %}
+    <div class="card">
+      <div class="muted">{{ p.created_at|datetimeformat }} &middot;
+        <span class="badge {{ p.risk }}">Risk: {{ p.risk }} ({{ p.score }})</span>
+      </div>
+      <p><strong>You wrote:</strong> {{ p.original }}</p>
+      {% if p.changed %}
+        <div class="changed">
+          <strong>On the real feed this would appear as:</strong><br>{{ p.preview }}
+          <div class="muted">The community rules would censor or remove part of this text.</div>
+        </div>
+      {% else %}
+        <div class="muted">Looks good &mdash; this would be published unchanged.</div>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  {% if practice_posts %}
+    <form method="post" action="{{ url_for('sandbox_clear') }}">
+      <button class="secondary" type="submit">Clear my sandbox</button>
+    </form>
+  {% endif %}
+</div>
+</body>
+</html>
